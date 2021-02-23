@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package proto;
+
+message Player{
+    string id = 1;
+    string name = 2;
+}
+
+// Message是服务器跟客户端之间数据传递的载体
+// type = 0表示服务器给玩家首次发牌
+// type = 1表示服务器给玩家发送额外的三张牌
+// type = 2 表示系统提示玩家开始叫地主
+// type = 3表示玩家抢地主
+// type = 4表示玩家叫地主
+// type = 5表示玩家出牌
+
+// 如果没有playerID表示消息来自服务器
+// 如果存在playerID,表示消息来自该playerID
+message Message{
+    string id = 1;
+    string playerID = 2;
+    string content = 3;
+    int32 type  = 4;
+    string timestamp = 5;
+}
+
+// 让服务器获悉客户端(玩家)是否在线 
+message Connect{
+    Player player = 1;
+    bool active = 2;
+}
+
+
+
+
+message Close{}
+
+// 服务器广播游戏的数据
+service BroadCast{
+    // 用于客户端发送连接请求
+    rpc CreateStream(Connect) returns (stream Message);
+
+    // 用于服务器返回消息给客户端
+    rpc BroadcastMessage(Message) returns (Close);
+
+    rpc DeliverMessage(Message) returns (Close);
+    
+}

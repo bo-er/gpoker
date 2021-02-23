@@ -1,8 +1,6 @@
 package rules
 
 import (
-	"fmt"
-
 	"github.com/bo-er/poker/utils"
 )
 
@@ -22,7 +20,7 @@ func CheckCardsRules(cards []int) string {
 		return "doubleCards"
 	case 4:
 		if IsBomb(cards) {
-			return fmt.Sprintf("bomb_%d", cards[0]%13)
+			return "bomb"
 		}
 		if IsThreeWithOne(cards) {
 			return "threeWithOne"
@@ -201,4 +199,40 @@ func IsStraight(cards []int) bool {
 		}
 	}
 	return true
+}
+
+func getPivotOfThree(cards []int) int {
+	pivot1 := 0
+	count1 := 0
+	pivot2 := 0
+	count2 := 0
+
+	for _, card := range cards {
+		if pivot1 == 0 {
+			pivot1 = card % 13
+			count1++
+			continue
+		}
+		if pivot2 == 0 {
+			pivot2 = card % 13
+			count2++
+			continue
+		}
+		if card%13 == pivot1 {
+			count1++
+		} else {
+			count2++
+		}
+	}
+	if count1 > count2 {
+		return pivot1
+	}
+	return pivot2
+}
+
+func stripCards(cards []int)[]int {
+	for i, card := range cards {
+		cards[i] = card % 13
+	}
+	return cards
 }
