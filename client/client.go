@@ -90,7 +90,6 @@ func main() {
 				Content:   scanner.Text(),
 				Timestamp: timestamp.String(),
 			}
-			fmt.Println("msg is :", msg)
 			_, err := client.BroadcastMessage(context.Background(), msg)
 			if err != nil {
 				fmt.Printf("Error sending message:%s", err)
@@ -105,4 +104,8 @@ func main() {
 		close(done)
 	}()
 	<-done
+}
+
+func parsePlayerInstruction(instruction string){
+
 }

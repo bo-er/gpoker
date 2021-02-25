@@ -8,12 +8,15 @@ message Player{
 }
 
 // Message是服务器跟客户端之间数据传递的载体
-// type = 0表示服务器给玩家首次发牌
-// type = 1表示服务器给玩家发送额外的三张牌
-// type = 2 表示系统提示玩家开始叫地主
-// type = 3表示玩家抢地主
-// type = 4表示玩家叫地主
-// type = 5表示玩家出牌
+// messageType = 0表示服务器发送游戏开始信号
+// messageType = 1表示服务器给每位玩家发17张牌
+// messageType = 2表示服务器给玩家发送额外的三张牌
+// messageType = 3表示系统提示玩家开始叫地主
+// messageType = 4表示玩家叫地主
+// messageType = 5表示系统广播抢到地主的玩家
+// messageType = 6表示玩家出牌
+// messageType = 7表示由于玩家中途断开或者逃跑游戏结束
+// messageType = 8表示游戏结束，并且广播游戏结果
 
 // 如果没有playerID表示消息来自服务器
 // 如果存在playerID,表示消息来自该playerID
@@ -21,7 +24,7 @@ message Message{
     string id = 1;
     string playerID = 2;
     string content = 3;
-    int32 type  = 4;
+    int32 messageType  = 4;
     string timestamp = 5;
 }
 

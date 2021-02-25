@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,15 +21,13 @@ import (
 )
 
 var grpcLog glog.LoggerV2
-var gameStore *GameStore
+
+// var gameStore *GameStore
 
 func init() {
 	grpcLog = glog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout)
 	connectionMap = make(map[string]*Connection)
-	gameStore = &GameStore{
-		PlayerStatus: make(map[string]bool),
-		PlayerCards:  make(map[string][]int),
-	}
+
 }
 
 // Connection 是存储连接信息的结构体
@@ -40,15 +40,17 @@ type Connection struct {
 
 // Server 是游戏服务结构体
 type Server struct {
-	Connections []*Connection
+	Connections       []*Connection
+	InMemoryGameStore *GameStore
 }
 
 // GameStore 是存储游戏数据的结构体
 type GameStore struct {
-	PlayerStatus  map[string]bool  // 存储玩家准备状态的map,key为playerID,value为布尔类型，ture表示玩家准备就绪，false表示未准备
-	Master        string           //存储地主的playerID
-	CurrentPlayer string           //存储当前出牌的玩家
-	PlayerCards   map[string][]int //存储各个玩家当前的牌
+	PlayerStatus   map[string]bool  // 存储玩家准备状态的map,key为playerID,value为布尔类型，ture表示玩家准备就绪，false表示未准备
+	Master         string           //存储地主的playerID
+	MasterNominees []string         //存储叫地主的playerID
+	CurrentPlayer  string           //存储当前出牌的玩家
+	PlayerCards    map[string][]int //存储各个玩家当前的牌
 }
 
 var connectionMap map[string]*Connection
@@ -96,9 +98,9 @@ func (s *Server) BroadcastMessage(ctx context.Context, msg *pb.Message) (*pb.Clo
 		return &pb.Close{}, errors.New("wait until all 3 players are connected")
 	}
 	if msg.Content == "ready" {
-		gameStore.PlayerStatus[msg.PlayerID] = true
+		s.InMemoryGameStore.PlayerStatus[msg.PlayerID] = true
 	}
-	fmt.Println("gameStore player status is:", gameStore.PlayerStatus)
+	fmt.Println("gameStore player status is:", s.InMemoryGameStore.PlayerStatus)
 	wait := sync.WaitGroup{}
 	done := make(chan int)
 	for _, conn := range s.Connections {
@@ -131,9 +133,12 @@ func main() {
 	var connections []*Connection
 	server := &Server{
 		Connections: connections,
+		InMemoryGameStore: &GameStore{
+			PlayerStatus: make(map[string]bool),
+			PlayerCards:  make(map[string][]int),
+		},
 	}
-	timestamp := time.Now()
-	id := sha256.Sum256([]byte(timestamp.String()))
+
 	grpcServer := grpc.NewServer()
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -149,33 +154,35 @@ func main() {
 			ctx := context.Background()
 			fmt.Printf("connections are:%v,and current time is:%v\n", server.Connections, time.Now())
 			if len(server.Connections) == 3 {
-				for _, value := range gameStore.PlayerStatus {
+				for _, value := range server.InMemoryGameStore.PlayerStatus {
 					if !value {
 						goto CHECK
 					}
 				}
 
-				_, err := server.BroadcastMessage(ctx, &pb.Message{
-					Id:        hex.EncodeToString(id[:]),
-					PlayerID:  "system001",
-					Content:   "游戏开始",
-					Timestamp: timestamp.String(),
-				})
+				err := server.systemBroadCastMessage(ctx, "游戏开始", 0)
 				if err != nil {
 					fmt.Printf("Error sending message:%s", err)
 
 				}
-				fmt.Println("游戏开始!")
+
 				for _, conn := range server.Connections {
-					fmt.Println("连接id是:", conn.id)
 					cards := getRandomCards(17)
-					id = sha256.Sum256([]byte(timestamp.String() + conn.id))
-					server.DeliverMessage(ctx, &pb.Message{
-						Id:        hex.EncodeToString(id[:]),
-						PlayerID:  conn.id,
-						Content:   cards,
-						Timestamp: timestamp.String(),
-					})
+					err = server.deliverMessage(ctx, cards, conn.id, 1)
+
+				}
+				for _, conn := range server.Connections {
+					err = server.deliverMessage(ctx,
+						"开始抢地主,发送`叫地主`来抢地主,系统将随机挑选一名叫地主玩家作为地主,如果20秒没有人叫地主游戏将重新开始", conn.id, 3)
+				}
+				timer := time.NewTimer(20 * time.Second)
+				<-timer.C
+				if len(server.InMemoryGameStore.MasterNominees) != 0 {
+					master := server.pickerARandomMaster()
+					server.systemBroadCastMessage(ctx, master, 5)
+				} else {
+					fmt.Println("由于没有玩家叫地主，游戏重新开始")
+					goto CHECK
 				}
 
 				return
@@ -187,10 +194,55 @@ func main() {
 }
 
 func getRandomCards(total int) string {
-	var result []byte = make([]byte, total)
+	var result []string = make([]string, total)
 	for i := 0; i < total; i++ {
-		result = append(result, byte(rules.GetRandomCard()))
+		result[i] = fmt.Sprint(rules.GetRandomCard())
 	}
-	fmt.Println("随机生成的牌是:")
-	return string(result)
+	joinedResult := strings.Join(result, ",")
+	fmt.Println("随机生成的牌是:", joinedResult)
+	return joinedResult
+}
+
+func (s *Server) systemBroadCastMessage(ctx context.Context, message string, messageType int32) error {
+	timestamp := time.Now()
+	id := sha256.Sum256([]byte(timestamp.String()))
+	_, err := s.BroadcastMessage(ctx, &pb.Message{
+		Id:          hex.EncodeToString(id[:]),
+		PlayerID:    "system001",
+		Content:     message,
+		Timestamp:   timestamp.String(),
+		MessageType: messageType,
+	})
+	if err != nil {
+		return fmt.Errorf("Error sending message:%s", err)
+	}
+	return nil
+}
+
+// deliverMessage 跟广播不同的是 deliverMessage是向特定客户端发送消息
+func (s *Server) deliverMessage(ctx context.Context, message, playerID string, messageType int32) error {
+	timestamp := time.Now()
+	id := sha256.Sum256([]byte(timestamp.String() + playerID))
+	_, err := s.DeliverMessage(ctx, &pb.Message{
+		Id:          hex.EncodeToString(id[:]),
+		PlayerID:    playerID,
+		Content:     message,
+		Timestamp:   timestamp.String(),
+		MessageType: messageType,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) processPlayerMessage(msg *pb.Message) {
+	if msg.MessageType == 4 {
+		s.InMemoryGameStore.MasterNominees = append(s.InMemoryGameStore.MasterNominees, msg.PlayerID)
+	}
+}
+
+func (s *Server) pickerARandomMaster() string {
+	index := rand.Intn(len(s.InMemoryGameStore.MasterNominees))
+	return s.InMemoryGameStore.MasterNominees[index]
 }

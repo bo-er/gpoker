@@ -73,7 +73,7 @@ func TestCheckCardsRules(t *testing.T) {
 		{1, 2, 3, 4, 5, 6},
 		{1, 15, 29, 4, 18, 6},
 		{1, 14, 2, 28, 7, 20},
-		{1, 14, 2, 28, 7, 20,3,16,5,18},
+		{1, 14, 2, 28, 7, 20, 3, 16, 5, 18},
 		{1, 14, 2, 28, 7, 20, 40, 4},
 		{1, 14, 2, 28},
 		{1, 14, 27, 40, 7},
@@ -83,7 +83,7 @@ func TestCheckCardsRules(t *testing.T) {
 	for i, cards := range cardsGroup {
 		fmt.Println("数字牌是:", cards, "持有的牌是:", generateCardsNames(cards))
 		rule := rules.CheckCardsRules(cards)
-		fmt.Println("rule is :",rule)
+		fmt.Println("rule is :", rule)
 		require.True(t, names[i] == rule)
 	}
 
@@ -159,5 +159,13 @@ func generateCardsNames(cards []int) []string {
 		cardsNames[i] = name
 	}
 	return cardsNames
+
+}
+
+func TestGenerateCards(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		card := rules.GetRandomCard()
+		fmt.Println(card)
+	}
 
 }

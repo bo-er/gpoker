@@ -1,12 +1,15 @@
 package rules
 
 import (
+	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
+	fmt.Println("初始化扑克牌")
 	for i := 0; i < 54; i++ {
 		remainNumber[i] = i
 	}
@@ -20,11 +23,11 @@ func GetRandomCard() int {
 	chosen := remainNumber[index]
 	remainNumber = append(remainNumber[:index], remainNumber[index+1:]...)
 	takenNumber = append(takenNumber, chosen)
+	fmt.Println("the card chosen is :", chosen,"remain cards are:",remainNumber)
 	return chosen
 }
 
-func PickAMaster() string {
-	players := []string{"PlayerA", "PlayerB", "PlayerC"}
-	index := rand.Intn(len(players))
-	return players[index]
+func GetRemainingCards() string{
+	
 }
+
