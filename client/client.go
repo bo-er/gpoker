@@ -84,11 +84,13 @@ func main() {
 		defer wait.Done()
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
+			message, messageType := parsePlayerInstruction(scanner.Text())
 			msg := &pb.Message{
-				Id:        hex.EncodeToString(id[:]),
-				PlayerID:  player.Id,
-				Content:   scanner.Text(),
-				Timestamp: timestamp.String(),
+				Id:          hex.EncodeToString(id[:]),
+				PlayerID:    player.Id,
+				Content:     message,
+				Timestamp:   timestamp.String(),
+				MessageType: int32(messageType),
 			}
 			_, err := client.BroadcastMessage(context.Background(), msg)
 			if err != nil {
@@ -106,6 +108,18 @@ func main() {
 	<-done
 }
 
-func parsePlayerInstruction(instruction string){
-
+func parsePlayerInstruction(instruction string) (parsedMessage string, messageType int) {
+	fmt.Println("instruction is:", instruction)
+	switch instruction {
+	case "call master":
+		messageType = 4
+		return
+	case "pass":
+		messageType = 7
+		return
+	default:
+		parsedMessage = instruction
+		messageType = 6
+		return
+	}
 }

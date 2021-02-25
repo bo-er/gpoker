@@ -163,9 +163,11 @@ func generateCardsNames(cards []int) []string {
 }
 
 func TestGenerateCards(t *testing.T) {
-	for i := 0; i < 10; i++ {
-		card := rules.GetRandomCard()
-		fmt.Println(card)
+	rules.Init()
+	result, err := rules.GetRandomCard(17)
+	if err != nil {
+		fmt.Println(err)
 	}
+	fmt.Println(result)
 
 }

@@ -15,8 +15,10 @@ message Player{
 // messageType = 4表示玩家叫地主
 // messageType = 5表示系统广播抢到地主的玩家
 // messageType = 6表示玩家出牌
-// messageType = 7表示由于玩家中途断开或者逃跑游戏结束
-// messageType = 8表示游戏结束，并且广播游戏结果
+// messageType = 7表示玩家放弃出牌
+// messageType = 8表示由于玩家中途断开或者逃跑游戏结束
+// messageType = 9表示游戏结束，并且广播游戏结果
+
 
 // 如果没有playerID表示消息来自服务器
 // 如果存在playerID,表示消息来自该playerID
