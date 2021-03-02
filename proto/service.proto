@@ -18,7 +18,8 @@ message Player{
 // messageType = 7表示玩家放弃出牌
 // messageType = 8表示由于玩家中途断开或者逃跑游戏结束
 // messageType = 9表示游戏结束，并且广播游戏结果
-
+// messageType = 10 表示客户端向服务器定时发送心跳，如果心跳中断说明连接断开
+// messageType = 11 表示服务器提醒玩家出牌
 
 // 如果没有playerID表示消息来自服务器
 // 如果存在playerID,表示消息来自该playerID

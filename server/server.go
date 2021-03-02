@@ -35,6 +35,7 @@ type Connection struct {
 	id     string
 	active bool
 	error  chan error
+	ticker *time.Ticker
 }
 
 // Server 是游戏服务结构体
@@ -50,6 +51,7 @@ type GameStore struct {
 	MasterNominees []string         //存储叫地主的playerID
 	CurrentPlayer  string           //存储当前出牌的玩家
 	PlayerCards    map[string][]int //存储各个玩家当前的牌
+	GameStatus     bool             //游戏是否开始的标识
 }
 
 var connectionMap map[string]*Connection
@@ -65,6 +67,7 @@ func (s *Server) CreateStream(pconn *pb.Connect, stream pb.BroadCast_CreateStrea
 		id:     pconn.Player.Id,
 		active: pconn.Active,
 		error:  make(chan error),
+		ticker: time.NewTicker(3 * time.Second),
 	}
 	s.Connections = append(s.Connections, conn)
 	connectionMap[conn.id] = conn
@@ -89,16 +92,19 @@ func (s *Server) DeliverMessage(ctx context.Context, msg *pb.Message) (*pb.Close
 
 // BroadcastMessage 是服务器广播消息的方法
 func (s *Server) BroadcastMessage(ctx context.Context, msg *pb.Message) (*pb.Close, error) {
-	_, ok := connectionMap[msg.PlayerID]
-	if !ok && msg.PlayerID != "system001" {
-		return &pb.Close{}, errors.New("Illegal player id, service has been denied")
-	}
-	if len(s.Connections) != 3 {
+	// _, ok := connectionMap[msg.PlayerID]
+	// if !ok && msg.PlayerID != "system001" {
+	// 	fmt.Println(s.Connections)
+	// 	return &pb.Close{}, errors.New("Illegal player id, service has been denied")
+	// }
+	fmt.Println("message", msg, msg.MessageType == 10)
+	if len(s.Connections) != 3 && msg.MessageType != 10 {
 		return &pb.Close{}, errors.New("wait until all 3 players are connected")
 	}
 	if msg.Content == "ready" {
 		s.InMemoryGameStore.PlayerStatus[msg.PlayerID] = true
 	}
+
 	processed := s.processPlayerMessage(msg)
 	if processed {
 		return &pb.Close{}, nil
@@ -150,56 +156,116 @@ func main() {
 	grpcLog.Info("Starting server at port : 8080")
 	// 由于server实现了BroadCast服务的两个方法，因此可以作为BroadCast服务注册
 	pb.RegisterBroadCastServer(grpcServer, server)
+	var connectionCh chan bool = make(chan bool)
+	var gameActivated bool
 	go func() {
-	CHECK:
 		for {
 			time.Sleep(time.Second)
-			ctx := context.Background()
-			fmt.Printf("connections are:%v,and current time is:%v\n", server.Connections, time.Now())
-			if len(server.Connections) == 3 {
-				// for _, value := range server.InMemoryGameStore.PlayerStatus {
-				// 	if !value {
-				// 		goto CHECK
-				// 	}
-				// }
-				rules.Init()
-				err := server.systemBroadCastMessage(ctx, "游戏开始", 0)
-				if err != nil {
-					fmt.Printf("Error sending message:%s", err)
 
+			for index, conn := range server.Connections {
+				select {
+				case <-conn.ticker.C:
+					conn.active = false
+					server.Connections = append(server.Connections[:index], server.Connections[index+1:]...)
+				default:
 				}
+			}
 
+			if len(server.Connections) == 3 && gameActivated {
 				for _, conn := range server.Connections {
-					cards := getRandomCards(17)
-					err = server.deliverMessage(ctx, cards, conn.id, 1)
-
-				}
-				for _, conn := range server.Connections {
-					err = server.deliverMessage(ctx,
-						"开始抢地主,发送`叫地主`来抢地主,系统将随机挑选一名叫地主玩家作为地主,如果20秒没有人叫地主游戏将重新开始", conn.id, 3)
-				}
-				timer := time.NewTimer(20 * time.Second)
-				<-timer.C
-				if len(server.InMemoryGameStore.MasterNominees) != 0 {
-					master := server.pickerARandomMaster()
-					server.systemBroadCastMessage(ctx, master, 5)
-					remainCards, err := rules.GetRandomCard(3)
-					if err != nil {
-						fmt.Printf("获取地主的三张牌时出错:%v\n", err)
+					if !conn.active {
+						fmt.Println("游戏重新开始")
+						gameActivated = false
+						connectionCh <- true
 					}
-					err = server.deliverMessage(ctx, remainCards, master, 2)
-					if err != nil {
-						fmt.Printf("给抢到地主的玩家:%s发送地主的三张牌时产生错误:%v", master, err)
-					}
-				} else {
-					fmt.Println("由于没有玩家叫地主，游戏重新开始")
-					goto CHECK
 				}
 
-				return
 			}
 		}
+	}()
+	go func() {
+	CHECK:
 
+		server.Connections = make([]*Connection, 0)
+		for {
+			select {
+			case <-connectionCh:
+				{
+					goto CHECK
+				}
+			default:
+				{
+					time.Sleep(time.Second)
+					ctx := context.Background()
+					fmt.Printf("connections are:%v,and current time is:%v\n", server.Connections, time.Now())
+					if len(server.Connections) == 3 {
+						// for _, value := range server.InMemoryGameStore.PlayerStatus {
+						// 	if !value {
+						// 		goto CHECK
+						// 	}
+						// }
+						gameActivated = true
+						rules.Init()
+						err := server.systemBroadCastMessage(ctx, "游戏开始", 0)
+						if err != nil {
+							fmt.Printf("Error sending message:%s", err)
+
+						}
+
+						for _, conn := range server.Connections {
+							cards := getRandomCards(17)
+							err = server.deliverMessage(ctx, cards, conn.id, 1)
+
+						}
+						for _, conn := range server.Connections {
+							err = server.deliverMessage(ctx,
+								"开始抢地主,发送`叫地主`来抢地主,系统将随机挑选一名叫地主玩家作为地主,如果20秒没有人叫地主游戏将重新开始", conn.id, 3)
+						}
+						timer := time.NewTimer(20 * time.Second)
+						select {
+						case <-timer.C:
+							{
+								if len(server.InMemoryGameStore.MasterNominees) != 0 {
+									master := server.pickerARandomMaster()
+									server.systemBroadCastMessage(ctx, master, 5)
+									server.InMemoryGameStore.Master = master
+									server.InMemoryGameStore.CurrentPlayer = master
+									remainCards, err := rules.GetRandomCard(3)
+									if err != nil {
+										fmt.Printf("获取地主的三张牌时出错:%v\n", err)
+									}
+									err = server.deliverMessage(ctx, remainCards, master, 2)
+									if err != nil {
+										fmt.Printf("给抢到地主的玩家:%s发送地主的三张牌时产生错误:%v", master, err)
+									}
+								} else {
+									fmt.Println("由于没有玩家叫地主，游戏重新开始")
+									goto CHECK
+								}
+
+								return
+							}
+						case <-connectionCh:
+							{
+								goto CHECK
+							}
+						}
+
+					}
+				}
+			}
+
+		}
+
+	}()
+	go func() {
+		for {
+			if server.InMemoryGameStore.GameStatus {
+				currentPlayer := server.InMemoryGameStore.CurrentPlayer
+				message := fmt.Sprintf("出牌玩家:%s", currentPlayer)
+				server.systemBroadCastMessage(context.Background(), message, 11)
+			}
+		}
 	}()
 	grpcServer.Serve(listener)
 }
@@ -250,6 +316,9 @@ func (s *Server) processPlayerMessage(msg *pb.Message) bool {
 	if msg.MessageType == 4 {
 		s.InMemoryGameStore.MasterNominees = append(s.InMemoryGameStore.MasterNominees, msg.PlayerID)
 		return true
+	}
+	if msg.MessageType == 10 {
+		connectionMap[msg.PlayerID].ticker.Reset(3 * time.Second)
 	}
 	return false
 }

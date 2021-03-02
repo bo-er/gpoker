@@ -18,7 +18,7 @@ import (
 
 var client pb.BroadCastClient
 var wait *sync.WaitGroup
-
+var connTicker *time.Ticker = time.NewTicker(3 * time.Second)
 var cards []int
 
 //通过初始化函数来初始化WaitGroup
@@ -35,7 +35,6 @@ func connect(player *pb.Player) error {
 	if err != nil {
 		return fmt.Errorf("connection failed: %v", err)
 	}
-	fmt.Println("stream created")
 	wait.Add(1)
 	go func(str pb.BroadCast_CreateStreamClient) {
 		defer wait.Done()
@@ -48,9 +47,34 @@ func connect(player *pb.Player) error {
 			// if msg.Type == 0 && msg.PlayerID == player.Id {
 			// 	fmt.Println("接收到系统初次发牌")
 			// }
-			fmt.Printf("%v : %s\n", msg.Id, msg.Content)
+			// 处理接收到的online 信号
+			if msg.Content == "online" {
+				connTicker.Reset(3 * time.Second)
+			} else {
+				fmt.Printf("%v : %s\n", msg.Id, msg.Content)
+			}
+
 		}
 	}(stream)
+	go func() {
+		for {
+			select {
+			case <-connTicker.C:
+				{
+					fmt.Println("连接丢失")
+					os.Exit(-1)
+
+				}
+			default:
+				{
+					time.Sleep(time.Second)
+					sendHeartbeatMessage(player.Id)
+				}
+			}
+
+		}
+
+	}()
 	return streamError
 }
 
@@ -108,6 +132,7 @@ func main() {
 	<-done
 }
 
+// parsePlayerInstruction 由于游戏存在特殊指令，因此检测玩家是否有输入这些特殊指令
 func parsePlayerInstruction(instruction string) (parsedMessage string, messageType int) {
 	fmt.Println("instruction is:", instruction)
 	switch instruction {
@@ -122,4 +147,25 @@ func parsePlayerInstruction(instruction string) (parsedMessage string, messageTy
 		messageType = 6
 		return
 	}
+}
+
+func sendHeartbeatMessage(playerID string) error {
+
+	timestamp := time.Now()
+	id := sha256.Sum256([]byte(timestamp.String()))
+	msg := &pb.Message{
+		Id:          hex.EncodeToString(id[:]),
+		PlayerID:    playerID,
+		Content:     "online",
+		Timestamp:   timestamp.String(),
+		MessageType: int32(10),
+	}
+
+	_, err := client.BroadcastMessage(context.Background(), msg)
+
+	if err != nil {
+		fmt.Printf("Error sending message:%s", err)
+		return fmt.Errorf("Error sending message:%s", err)
+	}
+	return nil
 }
