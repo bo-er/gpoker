@@ -26,5 +26,18 @@ func SwitchArrayElement(elements interface{}, positionA int, positionB int) {
 		e[positionA] = eleB
 		e[positionB] = eleA
 	}
+}
 
+// MapToString 将Map转化为字符串
+func MapToString(m map[string]int) string {
+	length := len(m)
+	var result string
+	var mapStringSlice []interface{}
+	for i := 0; i < length; i++ {
+		result += "%s/"
+	}
+	for k, v := range m {
+		mapStringSlice = append(mapStringSlice, fmt.Sprintf("%s:%d", k, v))
+	}
+	return fmt.Sprintf(result, mapStringSlice...)
 }

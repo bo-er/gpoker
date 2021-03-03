@@ -6,7 +6,8 @@ import (
 	"github.com/bo-er/poker/utils"
 )
 
-func checkGameRuleFollowed(previous []int, later []int) bool {
+// CheckGameRuleFollowed 用于检查出牌是否符合游戏规则
+func CheckGameRuleFollowed(previous []int, later []int) bool {
 	laterType := CheckCardsRules(later)
 	previousType := CheckCardsRules(previous)
 

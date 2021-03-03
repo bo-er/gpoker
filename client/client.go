@@ -9,13 +9,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/bo-er/poker/codes"
 	"github.com/bo-er/poker/pb"
 	"google.golang.org/grpc"
 )
 
+var currentPlayer string
 var client pb.BroadCastClient
 var wait *sync.WaitGroup
 var connTicker *time.Ticker = time.NewTicker(3 * time.Second)
@@ -48,7 +51,13 @@ func connect(player *pb.Player) error {
 			// 	fmt.Println("接收到系统初次发牌")
 			// }
 			// 处理接收到的online 信号
-			if msg.Content == "online" {
+			if msg.MessageType == codes.Heartbeat {
+				messageSlice := strings.Split(msg.Content, "/")
+				if len(messageSlice) != 1 {
+					currentPlayer = messageSlice[2]
+					fmt.Println("当前出牌的玩家是:", currentPlayer)
+				}
+
 				connTicker.Reset(3 * time.Second)
 			} else {
 				fmt.Printf("%v : %s\n", msg.Id, msg.Content)

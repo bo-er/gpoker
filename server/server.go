@@ -10,11 +10,15 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/bo-er/poker/codes"
 	"github.com/bo-er/poker/pb"
 	"github.com/bo-er/poker/rules"
+	"github.com/bo-er/poker/utils"
 	"google.golang.org/grpc"
 	glog "google.golang.org/grpc/grpclog"
 )
@@ -50,8 +54,11 @@ type GameStore struct {
 	Master         string           //存储地主的playerID
 	MasterNominees []string         //存储叫地主的playerID
 	CurrentPlayer  string           //存储当前出牌的玩家
+	PreviousCards  []int            //存储前一个玩家所出的牌
+	PreviousPlayer string           //存储前一个玩家
 	PlayerCards    map[string][]int //存储各个玩家当前的牌
 	GameStatus     bool             //游戏是否开始的标识
+	GamePlayers    map[string]int   //存储当前正在打牌的玩家
 }
 
 var connectionMap map[string]*Connection
@@ -99,17 +106,19 @@ func (s *Server) BroadcastMessage(ctx context.Context, msg *pb.Message) (*pb.Clo
 	// }
 	fmt.Println("message", msg, msg.MessageType == 10)
 	if len(s.Connections) != 3 && msg.MessageType != 10 {
-		return &pb.Close{}, errors.New("wait until all 3 players are connected")
+		return &pb.Close{}, errors.New("Wait until all 3 players are connected")
 	}
 	if msg.Content == "ready" {
 		s.InMemoryGameStore.PlayerStatus[msg.PlayerID] = true
 	}
 
-	processed := s.processPlayerMessage(msg)
+	msg, processed, err := s.processPlayerMessage(msg)
+	if err != nil {
+		fmt.Printf("Error while processing player's message:%v", err)
+	}
 	if processed {
 		return &pb.Close{}, nil
 	}
-	fmt.Println("gameStore player status is:", s.InMemoryGameStore.PlayerStatus)
 	wait := sync.WaitGroup{}
 	done := make(chan int)
 	for _, conn := range s.Connections {
@@ -118,6 +127,9 @@ func (s *Server) BroadcastMessage(ctx context.Context, msg *pb.Message) (*pb.Clo
 			defer wait.Done()
 			if conn.active {
 				// Send方法在stream接口里
+				// if msg.Content== "online"{
+				// 	msg.Content = fmt.Sprintf("online/%s",s.InMemoryGameStore.CurrentPlayer)
+				// }
 				err := conn.stream.Send(msg)
 				grpcLog.Infof("给客户端%s发送数据:%v\n", conn.id, msg.Content)
 				if err != nil {
@@ -165,6 +177,7 @@ func main() {
 			for index, conn := range server.Connections {
 				select {
 				case <-conn.ticker.C:
+					fmt.Println("ticker触发！")
 					conn.active = false
 					server.Connections = append(server.Connections[:index], server.Connections[index+1:]...)
 				default:
@@ -185,8 +198,8 @@ func main() {
 	}()
 	go func() {
 	CHECK:
-
-		server.Connections = make([]*Connection, 0)
+		server.cleanGame()
+		gamePlayers := server.InMemoryGameStore.GamePlayers
 		for {
 			select {
 			case <-connectionCh:
@@ -212,14 +225,18 @@ func main() {
 
 						}
 
-						for _, conn := range server.Connections {
+						for index, conn := range server.Connections {
 							cards := getRandomCards(17)
+							gamePlayers[conn.id] = index
 							err = server.deliverMessage(ctx, cards, conn.id, 1)
 
 						}
 						for _, conn := range server.Connections {
-							err = server.deliverMessage(ctx,
-								"开始抢地主,发送`叫地主`来抢地主,系统将随机挑选一名叫地主玩家作为地主,如果20秒没有人叫地主游戏将重新开始", conn.id, 3)
+							_ = server.deliverMessage(ctx,
+								"开始抢地主,发送`叫地主`来抢地主,系统将随机挑选一名叫地主玩家作为地主,如果20秒没有人叫地主游戏将断开连接", conn.id, 3)
+							playersString := utils.MapToString(gamePlayers)
+							_ = server.deliverMessage(ctx,
+								playersString, conn.id, 3)
 						}
 						timer := time.NewTimer(20 * time.Second)
 						select {
@@ -312,18 +329,82 @@ func (s *Server) deliverMessage(ctx context.Context, message, playerID string, m
 	return nil
 }
 
-func (s *Server) processPlayerMessage(msg *pb.Message) bool {
-	if msg.MessageType == 4 {
-		s.InMemoryGameStore.MasterNominees = append(s.InMemoryGameStore.MasterNominees, msg.PlayerID)
-		return true
+func (s *Server) processPlayerMessage(msg *pb.Message) (*pb.Message, bool, error) {
+	switch msg.MessageType {
+	case 4:
+		{
+			s.InMemoryGameStore.MasterNominees = append(s.InMemoryGameStore.MasterNominees, msg.PlayerID)
+			return msg, true, nil
+		}
+	case 6:
+		{
+			if msg.PlayerID != s.InMemoryGameStore.CurrentPlayer {
+				s.deliverMessage(context.Background(), "not your turn yet!", msg.PlayerID, codes.SystemMessage)
+				return msg, true, nil
+			}
+			parsedCards, err := parseStringCardsMessage(msg.Content)
+			if err != nil {
+				fmt.Errorf("Error happend while parsing client message:%v", err)
+			}
+			previousCards := s.InMemoryGameStore.PreviousCards
+			if len(previousCards) != 0 {
+				ok := rules.CheckGameRuleFollowed(previousCards, parsedCards)
+				if !ok {
+					s.deliverMessage(context.Background(), "illeagl!", msg.PlayerID, codes.SystemMessage)
+					return msg, true, nil
+				}
+
+			}
+			s.InMemoryGameStore.PreviousCards = parsedCards
+			s.InMemoryGameStore.PreviousPlayer = msg.PlayerID
+			index := s.InMemoryGameStore.GamePlayers[msg.PlayerID] + 1
+			for k, v := range s.InMemoryGameStore.GamePlayers {
+				if index%3 == v {
+					s.InMemoryGameStore.CurrentPlayer = k
+				}
+			}
+			return msg, false, nil
+
+		}
+		// 如果消息类型是10，返回false将在线消息转发给其他玩家
+	case 10:
+		{
+			connectionMap[msg.PlayerID].ticker.Reset(3 * time.Second)
+			currentPlayer := s.InMemoryGameStore.CurrentPlayer
+			if currentPlayer != "" {
+				newMessage := fmt.Sprintf("online/%s/%s", msg.PlayerID, currentPlayer)
+				msg.Content = newMessage
+				return msg, false, nil
+			}
+		}
 	}
-	if msg.MessageType == 10 {
-		connectionMap[msg.PlayerID].ticker.Reset(3 * time.Second)
-	}
-	return false
+	return msg, false, nil
 }
 
 func (s *Server) pickerARandomMaster() string {
 	index := rand.Intn(len(s.InMemoryGameStore.MasterNominees))
 	return s.InMemoryGameStore.MasterNominees[index]
+}
+
+func (s *Server) cleanGame() {
+	s.InMemoryGameStore.PreviousCards = []int{}
+	s.InMemoryGameStore.MasterNominees = []string{}
+	s.InMemoryGameStore.PlayerCards = make(map[string][]int)
+	s.InMemoryGameStore.PlayerStatus = make(map[string]bool)
+	s.InMemoryGameStore.GamePlayers = make(map[string]int)
+	s.Connections = make([]*Connection, 0)
+}
+
+func parseStringCardsMessage(message string) ([]int, error) {
+	var parsedCardsSlice []int
+	cardsSlice := strings.Split(message, "/")
+	for _, card := range cardsSlice {
+		number, err := strconv.Atoi(card)
+		if err != nil {
+			return nil, err
+		}
+		parsedCardsSlice = append(parsedCardsSlice, number)
+	}
+	return parsedCardsSlice, nil
+
 }
